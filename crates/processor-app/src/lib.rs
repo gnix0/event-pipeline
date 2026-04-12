@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use event_pipeline_types::{
-    AggregateFunction, CheckpointSummary, DeadLetterRecord, DeploymentState, JoinKind, OperatorKind,
-    PartitionAssignment, PipelineSpec, ReplayJob, SinkKind, WindowKind,
+    AggregateFunction, CheckpointSummary, DeadLetterRecord, DeploymentState, JoinKind,
+    OperatorKind, PartitionAssignment, PipelineSpec, ReplayJob, SinkKind, WindowKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value, json};

@@ -6,9 +6,9 @@ use event_pipeline_processor_app::{
     CheckpointWrite, DeadLetterWrite, LoadedCheckpoint, PipelineEvent, ProcessorRepository,
 };
 use event_pipeline_types::{
-    DeadLetterRecord, DeploymentState, PartitionAssignment, PipelineSpec, PipelineSummary, PlatformRole,
-    RegisteredTopic, ReplayJob, ReplayJobStatus, RoleBinding, ServiceAccount, SubjectKind,
-    TenantRecord, TenantSummary, TopicSummary, WorkerRecord, WorkerStatus,
+    DeadLetterRecord, DeploymentState, PartitionAssignment, PipelineSpec, PipelineSummary,
+    PlatformRole, RegisteredTopic, ReplayJob, ReplayJobStatus, RoleBinding, ServiceAccount,
+    SubjectKind, TenantRecord, TenantSummary, TopicSummary, WorkerRecord, WorkerStatus,
 };
 use sqlx::Row;
 use sqlx::migrate::Migrator;
