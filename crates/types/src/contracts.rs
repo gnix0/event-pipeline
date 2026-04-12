@@ -105,6 +105,17 @@ pub struct GetReplayJobResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListReplayJobsRequest {
+    pub tenant_id: String,
+    pub pipeline_id: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ListReplayJobsResponse {
+    pub replay_jobs: Vec<ReplayJob>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterTopicRequest {
     pub topic: RegisteredTopic,
 }
@@ -344,6 +355,10 @@ pub struct PipelineRunStatus {
     pub state: RunStatus,
     pub consumer_lag: u64,
     pub checkpoint_age_secs: u32,
+    pub active_assignment_count: u32,
+    pub ready_worker_count: u32,
+    pub replay_backlog: u32,
+    pub dead_letter_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -372,6 +387,7 @@ pub struct CheckpointSummary {
     pub offset: u64,
     pub snapshot_uri: String,
     pub snapshot_version: u32,
+    pub created_at_epoch_secs: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -382,6 +398,7 @@ pub struct DeadLetterRecord {
     pub record_key: String,
     pub failure_reason: String,
     pub retryable: bool,
+    pub created_at_epoch_secs: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -397,6 +414,8 @@ pub struct ReplayJob {
     pub claimed_by_worker_id: Option<String>,
     pub last_processed_offset: Option<u64>,
     pub error_message: Option<String>,
+    pub created_at_epoch_secs: u64,
+    pub updated_at_epoch_secs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

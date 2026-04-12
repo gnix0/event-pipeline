@@ -5,6 +5,7 @@ use event_pipeline_coordinator_app::{CoordinatorRepository, LeaseExpiryOutcome};
 use event_pipeline_processor_app::{
     CheckpointWrite, DeadLetterWrite, LoadedCheckpoint, PipelineEvent, ProcessorRepository,
 };
+use event_pipeline_query_app::{PartitionHighWatermark, QueryRepository};
 use event_pipeline_types::{
     DeadLetterRecord, DeploymentState, PartitionAssignment, PipelineSpec, PipelineSummary,
     PlatformRole, RegisteredTopic, ReplayJob, ReplayJobStatus, RoleBinding, ServiceAccount,
@@ -14,6 +15,7 @@ use sqlx::Row;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::Json;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -347,7 +349,9 @@ impl MetadataRepository for PostgresMetadataRepository {
               status,
               claimed_by_worker_id,
               last_processed_offset,
-              error_message
+              error_message,
+              extract(epoch from created_at)::bigint as created_at_epoch_secs,
+              extract(epoch from updated_at)::bigint as updated_at_epoch_secs
             from replay_jobs
             where tenant_id = $1 and replay_job_id = $2
             "#,
@@ -939,7 +943,13 @@ impl ProcessorRepository for PostgresMetadataRepository {
     ) -> Result<Option<LoadedCheckpoint>> {
         let row = sqlx::query(
             r#"
-            select partition_id, kafka_offset, snapshot_uri, snapshot_version, snapshot_state
+            select
+              partition_id,
+              kafka_offset,
+              snapshot_uri,
+              snapshot_version,
+              snapshot_state,
+              extract(epoch from created_at)::bigint as created_at_epoch_secs
             from checkpoints
             where tenant_id = $1 and pipeline_id = $2 and partition_id = $3
             order by created_at desc
@@ -961,6 +971,9 @@ impl ProcessorRepository for PostgresMetadataRepository {
                     offset: u64::try_from(row.try_get::<i64, _>("kafka_offset")?)?,
                     snapshot_uri: row.try_get("snapshot_uri")?,
                     snapshot_version: u32::try_from(row.try_get::<i64, _>("snapshot_version")?)?,
+                    created_at_epoch_secs: u64::try_from(
+                        row.try_get::<i64, _>("created_at_epoch_secs")?,
+                    )?,
                 },
                 snapshot_state,
             })
@@ -1056,6 +1069,7 @@ impl ProcessorRepository for PostgresMetadataRepository {
                 offset: checkpoint.offset,
                 snapshot_uri: checkpoint.snapshot_uri.clone(),
                 snapshot_version: checkpoint.snapshot_version,
+                created_at_epoch_secs: current_epoch_secs(),
             },
             snapshot_state: checkpoint.snapshot_state.clone(),
         })
@@ -1090,7 +1104,9 @@ impl ProcessorRepository for PostgresMetadataRepository {
                 updated_at = now()
             where replay_job_id = $1
             returning replay_job_id, tenant_id, pipeline_id, version, from_offset, to_offset, reason, status,
-                      claimed_by_worker_id, last_processed_offset, error_message
+                      claimed_by_worker_id, last_processed_offset, error_message,
+                      extract(epoch from created_at)::bigint as created_at_epoch_secs,
+                      extract(epoch from updated_at)::bigint as updated_at_epoch_secs
             "#,
         )
         .bind(replay_job_id)
@@ -1157,7 +1173,9 @@ impl ProcessorRepository for PostgresMetadataRepository {
                 updated_at = now()
             where replay_job_id = $1
             returning replay_job_id, tenant_id, pipeline_id, version, from_offset, to_offset, reason, status,
-                      claimed_by_worker_id, last_processed_offset, error_message
+                      claimed_by_worker_id, last_processed_offset, error_message,
+                      extract(epoch from created_at)::bigint as created_at_epoch_secs,
+                      extract(epoch from updated_at)::bigint as updated_at_epoch_secs
             "#,
         )
         .bind(Uuid::parse_str(replay_job_id)?)
@@ -1181,7 +1199,9 @@ impl ProcessorRepository for PostgresMetadataRepository {
                 updated_at = now()
             where replay_job_id = $1
             returning replay_job_id, tenant_id, pipeline_id, version, from_offset, to_offset, reason, status,
-                      claimed_by_worker_id, last_processed_offset, error_message
+                      claimed_by_worker_id, last_processed_offset, error_message,
+                      extract(epoch from created_at)::bigint as created_at_epoch_secs,
+                      extract(epoch from updated_at)::bigint as updated_at_epoch_secs
             "#,
         )
         .bind(Uuid::parse_str(replay_job_id)?)
@@ -1207,7 +1227,9 @@ impl ProcessorRepository for PostgresMetadataRepository {
                 updated_at = now()
             where replay_job_id = $1
             returning replay_job_id, tenant_id, pipeline_id, version, from_offset, to_offset, reason, status,
-                      claimed_by_worker_id, last_processed_offset, error_message
+                      claimed_by_worker_id, last_processed_offset, error_message,
+                      extract(epoch from created_at)::bigint as created_at_epoch_secs,
+                      extract(epoch from updated_at)::bigint as updated_at_epoch_secs
             "#,
         )
         .bind(Uuid::parse_str(replay_job_id)?)
@@ -1257,7 +1279,198 @@ impl ProcessorRepository for PostgresMetadataRepository {
             record_key: dead_letter.record_key.clone(),
             failure_reason: dead_letter.failure_reason.clone(),
             retryable: dead_letter.retryable,
+            created_at_epoch_secs: current_epoch_secs(),
         })
+    }
+}
+
+#[async_trait]
+impl QueryRepository for PostgresMetadataRepository {
+    async fn get_pipeline(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Option<PipelineSpec>> {
+        MetadataRepository::get_pipeline(self, tenant_id, pipeline_id, None).await
+    }
+
+    async fn list_assignments(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Vec<PartitionAssignment>> {
+        CoordinatorRepository::list_assignments(self, tenant_id, pipeline_id).await
+    }
+
+    async fn list_workers_for_pipeline(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Vec<WorkerRecord>> {
+        let rows = sqlx::query(
+            r#"
+            select distinct
+              w.worker_id,
+              w.endpoint,
+              w.availability_zone,
+              w.max_assignments,
+              w.labels,
+              w.status,
+              w.active_assignments,
+              extract(epoch from w.registered_at)::bigint as registered_at_epoch_secs,
+              extract(epoch from w.last_heartbeat_at)::bigint as last_heartbeat_at_epoch_secs
+            from workers w
+            join partition_assignments pa
+              on pa.worker_id = w.worker_id
+            where pa.tenant_id = $1 and pa.pipeline_id = $2
+            order by w.worker_id
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(pipeline_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(map_worker_record).collect()
+    }
+
+    async fn list_replay_jobs(&self, tenant_id: &str, pipeline_id: &str) -> Result<Vec<ReplayJob>> {
+        let rows = sqlx::query(
+            r#"
+            select
+              replay_job_id,
+              tenant_id,
+              pipeline_id,
+              version,
+              from_offset,
+              to_offset,
+              reason,
+              status,
+              claimed_by_worker_id,
+              last_processed_offset,
+              error_message,
+              extract(epoch from created_at)::bigint as created_at_epoch_secs,
+              extract(epoch from updated_at)::bigint as updated_at_epoch_secs
+            from replay_jobs
+            where tenant_id = $1 and pipeline_id = $2
+            order by created_at desc
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(pipeline_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(map_replay_job).collect()
+    }
+
+    async fn list_checkpoints(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Vec<event_pipeline_types::CheckpointSummary>> {
+        let rows = sqlx::query(
+            r#"
+            select
+              partition_id,
+              kafka_offset,
+              snapshot_uri,
+              snapshot_version,
+              extract(epoch from created_at)::bigint as created_at_epoch_secs
+            from checkpoints
+            where tenant_id = $1 and pipeline_id = $2
+            order by created_at desc
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(pipeline_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(event_pipeline_types::CheckpointSummary {
+                    partition_id: u32::try_from(row.try_get::<i32, _>("partition_id")?)?,
+                    offset: u64::try_from(row.try_get::<i64, _>("kafka_offset")?)?,
+                    snapshot_uri: row.try_get("snapshot_uri")?,
+                    snapshot_version: u32::try_from(row.try_get::<i64, _>("snapshot_version")?)?,
+                    created_at_epoch_secs: u64::try_from(
+                        row.try_get::<i64, _>("created_at_epoch_secs")?,
+                    )?,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_dead_letters(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Vec<DeadLetterRecord>> {
+        let rows = sqlx::query(
+            r#"
+            select
+              source_id,
+              partition_id,
+              event_offset,
+              record_key,
+              failure_reason,
+              retryable,
+              extract(epoch from created_at)::bigint as created_at_epoch_secs
+            from dead_letters
+            where tenant_id = $1 and pipeline_id = $2
+            order by created_at desc
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(pipeline_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(DeadLetterRecord {
+                    source_id: row.try_get("source_id")?,
+                    partition_id: u32::try_from(row.try_get::<i32, _>("partition_id")?)?,
+                    event_offset: u64::try_from(row.try_get::<i64, _>("event_offset")?)?,
+                    record_key: row.try_get("record_key")?,
+                    failure_reason: row.try_get("failure_reason")?,
+                    retryable: row.try_get("retryable")?,
+                    created_at_epoch_secs: u64::try_from(
+                        row.try_get::<i64, _>("created_at_epoch_secs")?,
+                    )?,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_partition_high_watermarks(
+        &self,
+        tenant_id: &str,
+        pipeline_id: &str,
+    ) -> Result<Vec<PartitionHighWatermark>> {
+        let rows = sqlx::query(
+            r#"
+            select partition_id, max(event_offset)::bigint as max_offset
+            from source_events
+            where tenant_id = $1 and pipeline_id = $2
+            group by partition_id
+            order by partition_id
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(pipeline_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(PartitionHighWatermark {
+                    partition_id: u32::try_from(row.try_get::<i32, _>("partition_id")?)?,
+                    max_offset: u64::try_from(row.try_get::<i64, _>("max_offset")?)?,
+                })
+            })
+            .collect()
     }
 }
 
@@ -1303,6 +1516,8 @@ fn map_replay_job(row: sqlx::postgres::PgRow) -> Result<ReplayJob> {
             .map(u64::try_from)
             .transpose()?,
         error_message: row.try_get("error_message")?,
+        created_at_epoch_secs: u64::try_from(row.try_get::<i64, _>("created_at_epoch_secs")?)?,
+        updated_at_epoch_secs: u64::try_from(row.try_get::<i64, _>("updated_at_epoch_secs")?)?,
     })
 }
 
@@ -1386,6 +1601,12 @@ fn replay_job_status_from_db(value: &str) -> Result<ReplayJobStatus> {
         "failed" => Ok(ReplayJobStatus::Failed),
         other => bail!("unsupported replay job status {other}"),
     }
+}
+
+fn current_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 fn subject_kind_to_db(kind: SubjectKind) -> &'static str {

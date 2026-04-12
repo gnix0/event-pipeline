@@ -13,6 +13,7 @@ members = [
     "crates/control-plane-app",
     "crates/processor-app",
     "crates/postgres-store",
+    "crates/query-app",
     "crates/runtime",
     "crates/types",
 ]

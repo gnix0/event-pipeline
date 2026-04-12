@@ -33,6 +33,7 @@ service AdminService {
 service RunService {
   rpc GetRunStatus(GetRunStatusRequest) returns (GetRunStatusResponse);
   rpc ListAssignments(ListAssignmentsRequest) returns (ListAssignmentsResponse);
+  rpc ListReplayJobs(ListReplayJobsRequest) returns (ListReplayJobsResponse);
   rpc GetCheckpointHistory(GetCheckpointHistoryRequest) returns (GetCheckpointHistoryResponse);
   rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
 }
@@ -127,6 +128,15 @@ message GetReplayJobRequest {
 
 message GetReplayJobResponse {
   ReplayJob replay_job = 1;
+}
+
+message ListReplayJobsRequest {
+  string tenant_id = 1;
+  string pipeline_id = 2;
+}
+
+message ListReplayJobsResponse {
+  repeated ReplayJob replay_jobs = 1;
 }
 
 message RegisterTopicRequest {
@@ -478,6 +488,10 @@ message PipelineRunStatus {
   RunStatus state = 3;
   uint64 consumer_lag = 4;
   uint32 checkpoint_age_secs = 5;
+  uint32 active_assignment_count = 6;
+  uint32 ready_worker_count = 7;
+  uint32 replay_backlog = 8;
+  uint64 dead_letter_count = 9;
 }
 
 message PartitionAssignment {
@@ -494,6 +508,7 @@ message CheckpointSummary {
   uint64 offset = 2;
   string snapshot_uri = 3;
   uint32 snapshot_version = 4;
+  uint64 created_at_epoch_secs = 5;
 }
 
 message DeadLetterRecord {
@@ -503,6 +518,7 @@ message DeadLetterRecord {
   string record_key = 4;
   string failure_reason = 5;
   bool retryable = 6;
+  uint64 created_at_epoch_secs = 7;
 }
 
 message ReplayJob {
@@ -517,6 +533,8 @@ message ReplayJob {
   optional string claimed_by_worker_id = 9;
   optional uint64 last_processed_offset = 10;
   optional string error_message = 11;
+  uint64 created_at_epoch_secs = 12;
+  uint64 updated_at_epoch_secs = 13;
 }
 
 enum DeploymentState {

@@ -1223,6 +1223,7 @@ mod tests {
                     offset: checkpoint.offset,
                     snapshot_uri: checkpoint.snapshot_uri.clone(),
                     snapshot_version: checkpoint.snapshot_version,
+                    created_at_epoch_secs: 0,
                 },
                 snapshot_state: checkpoint.snapshot_state.clone(),
             };
@@ -1339,6 +1340,7 @@ mod tests {
                 record_key: dead_letter.record_key.clone(),
                 failure_reason: dead_letter.failure_reason.clone(),
                 retryable: dead_letter.retryable,
+                created_at_epoch_secs: 0,
             };
             self.dead_letters.write().await.push(record.clone());
             Ok(record)
@@ -1620,6 +1622,8 @@ mod tests {
             claimed_by_worker_id: None,
             last_processed_offset: None,
             error_message: None,
+            created_at_epoch_secs: 0,
+            updated_at_epoch_secs: 0,
         });
 
         let response = service.poll_once().await?;

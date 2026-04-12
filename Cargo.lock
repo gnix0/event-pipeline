@@ -465,6 +465,7 @@ dependencies = [
  "event-pipeline-control-plane-app",
  "event-pipeline-coordinator-app",
  "event-pipeline-processor-app",
+ "event-pipeline-query-app",
  "event-pipeline-types",
  "serde_json",
  "sqlx",
@@ -482,6 +483,16 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "event-pipeline-query-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "event-pipeline-types",
+ "tokio",
 ]
 
 [[package]]
@@ -1264,9 +1275,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "event-pipeline-config",
+ "event-pipeline-postgres-store",
+ "event-pipeline-query-app",
  "event-pipeline-runtime",
  "event-pipeline-types",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

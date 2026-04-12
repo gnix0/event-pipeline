@@ -16,6 +16,7 @@ use event_pipeline_types::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -148,6 +149,8 @@ impl MetadataService {
                 claimed_by_worker_id: None,
                 last_processed_offset: None,
                 error_message: None,
+                created_at_epoch_secs: current_epoch_secs(),
+                updated_at_epoch_secs: current_epoch_secs(),
             })
             .await?;
 
@@ -192,6 +195,12 @@ impl MetadataService {
             .await?;
         Ok(ListTopicsResponse { topics })
     }
+}
+
+fn current_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 #[derive(Clone)]
